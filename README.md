@@ -150,6 +150,5 @@ Sistema progettato per essere:
 
 - efficiente   
 - sicuro   
-- reattivo 🧠  
+- reattivo 
 
-con una forte attenzione alla **scalabilità e modularità**.
