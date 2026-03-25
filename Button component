@@ -1,0 +1,95 @@
+// Autore: Vittori Matteo 
+// Matricola: 126646
+
+
+// Definizioni dei pin che sono usati nel sistema in modo da andar a semplificare identificazione e manutenzione
+#define BUTTON_PIN 3 
+
+// definisce il numero massimo di tentativi che l'utente può fare
+#define MAX_ATTEMPTS 3
+// definisce il numero di millisecondi necessari per la gestione del debounce,
+// sapendo che 5 * 8.192 ≈ 25 ms
+#define DEBOUNCE_TIME 3
+// definisce la durata sotto la quale la pressione viene tradotta in '.' e
+// sopra la quale in '_', 80 in quanto 49 * 8.192 ≈ 400ms
+#define MORSE_DURATION 49
+// definisce la lunghezza del correctMorseCode 
+#define CODE_LENGTH 3
+
+//  Variabili per gestione CODICE MORSE
+//  inserire nella variabile 'correctMorseCode' 0('.') o 1('_') in base al codice che si vuole generare
+volatile uint16_t correctMorseCode = 0b010; // Codice Morse segreto, **(16 simboli max)**
+volatile uint16_t morseCode;  // Variabile per salvare il codice Morse inserito
+volatile uint8_t codeLength;  // Variabile per gestione del codice inserito
+volatile uint8_t errors;      // numero errori commessi
+volatile bool flagStart;      // flag che indica che l'inseriento è iniziato
+volatile bool pinState;       // indica lo stato precedente del pin
+volatile bool STOP_flag;      // indica lo stop all'inserimento del codice 
+// contatore a 8 bit che incrementa ad ogni overflow, ogni 8.192ms,
+// con questo si riesce a contare ≈ 2 secondi
+volatile uint8_t overflowCount;  // utilizzato per la gestione pressione e fine inserimento del codice
+
+void setup() {
+ cli(); // Disabilita gli interrupt globali per evitare interruzioni durante la configurazione iniziale
+  Serial.begin(115200);
+
+ // Impostazione del pin del pulsante come input con pull-up e del pin ECHO (pin D2) come input
+ DDRD &= ~_BV(BUTTON_PIN);        // Pin D3,D2 come input
+ EICRA |= _BV(ISC10);             // Abilita interrupt su cambiamento di stato
+ PORTD |= _BV(PORTD3);            // Abilita pull-up interno
+ EIMSK |= _BV(INT1);              // Abilita l'interrupt INT1
+
+ // configurazione di Timer2 per gestione inserimento codice morse
+ TCCR2B |= _BV(CS22) | _BV(CS21); // Imposta prescaler 256 in modo da avere un overflow ogni 8.192ms
+ TIMSK2 |= _BV(TOIE2);            // Abilita interrupt su overflow
+
+ // inizializza le variabili utilizzate
+ flagStart = overflowCount = errors = morseCode = 0;
+
+ sei(); // Riabilita gli interrupt globali dopo la configurazione
+}
+
+
+void loop() {
+}
+
+// ISR per gestione tempi di inserimento CODICE MORSE
+ISR(TIMER2_OVF_vect) {
+  overflowCount++;  // Incrementa il contatore overflow
+  // controlla che non siano stati superati i 2 s dall'ultima pressione
+  // nel caso venga superato il codice viene considerato come inserito e si procede con la valutazione del codice
+  if(flagStart && overflowCount == 0xff) { // 255 * 8.192ms ≈ 2s 
+    Serial.println(); // **DEBUG**
+    checkCode();
+  }
+}
+
+// ISR per gestione PULSANTE e inserimento CODICE MORSE
+ISR(INT1_vect) {
+  bool currentState = !(PIND & _BV(BUTTON_PIN)); // Stato attuale del pin (premuto o rilasciato)
+  // Gestisci solo se lo stato è cambiato
+  if (currentState != pinState) {
+    pinState = currentState; // Aggiorna lo stato del pin
+    if (currentState) {   // Pulsante premuto
+      overflowCount = 0;  // Registra il momento di inizio della pressione
+      flagStart = true;   // Attiva il flag di inizio
+    } else {  // Pulsante rilasciato
+      if (overflowCount > DEBOUNCE_TIME) {
+        morseCode <<= 1;  // Shift a sinistra per fare spazio al nuovo simbolo
+        codeLength++;
+        if (overflowCount < MORSE_DURATION) {
+          // Aggiungi un `0` per il punto
+          Serial.print("."); // **DEBUG**
+        } else {
+          morseCode |= 1; // Aggiunge un `1` per la linea
+          Serial.print("_"); // **DEBUG**
+        }       
+      }
+    }
+  }
+}
+
+void checkCode(){
+ flagStart = false;   // disattiva il flag di inizio
+ Serial.println("DEBUG:    checkCode()   "); // **DEBUG**
+}
