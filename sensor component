@@ -1,0 +1,89 @@
+// Autore: Vittori Matteo 
+// Matricola: 126646
+
+// Definizioni dei pin che sono usati nel sistema in modo da andar a semplificare identificazione e manutenzione
+#define ECHO_PIN 2
+#define TRIG_PIN 3
+
+void setup() {
+  cli(); // Disabilita gli interrupt globali per evitare interruzioni durante la configurazione iniziale
+
+  Serial.begin(115200);
+
+  // Configura il pin ECHO (pin D2) 
+  DDRD &= ~_BV(ECHO_PIN); // Pin D2 come input
+  EICRA |= _BV(ISC00);    // Configura INT0 per attivarsi su pin change
+  EIMSK |= _BV(INT0);     // Abilita l'interrupt INT0
+
+  // Impostazione del pin TRIG (pin D4) come output
+  DDRD |= _BV(TRIG_PIN); // Pin D4 come output
+
+  // Configurazione del Timer1 per gestione sensore HC-SR04
+  TCCR1A = 0;             // Modalità normale
+  TCCR1B |= _BV(CS11);    // Imposta il prescaler a 8, (1 tick ogni 0.5µs)
+  TCCR1B &= ~(_BV(CS12) | _BV(CS10)); // reset dei pin non di interesse
+  OCR1A = 20;             // 20 * 0.5µs = 10µs 
+
+  // Configura il timer watchdog
+  setupWatchdogTimer(); 
+
+  // Imposta sleep mode su Power-down
+  SMCR |= _BV(SM1);  // Power-down mode
+  startSleepMode();  // entra in modalità risparmio energetico
+
+  sei(); // Riabilita gli interrupt globali dopo la configurazione
+}
+
+void loop() {
+}
+
+// Codice da eseguire quando il Watchdog Timer genera un interrupt
+ISR(WDT_vect) {
+  // Invia impulso TRIG
+  sendTrigger();
+}
+
+void sendTrigger() {
+  PORTD |= _BV(TRIG_PIN); // Attiva TRIG
+  TCNT1 = 0;              // Resetta il contatore
+  TIMSK1 |= _BV(OCIE1A);  // Abilita l'interrupt
+}
+
+ISR(TIMER1_COMPA_vect) {
+  PORTD &= ~_BV(TRIG_PIN); // Disattiva TRIG dopo 10µs
+  TIMSK1 &= ~_BV(OCIE1A);  // Disabilita l'interrupt per OCR1A
+}
+
+// gestione segnale ECHO e calcolo distanza rilevata
+ISR(INT0_vect) {
+   if(PIND & _BV(ECHO_PIN)){
+   // Rising edge: inizia la misurazione
+   TCNT1 = 0x00;  // Resetta Timer1
+  }else{
+    // oggetto rilevato entro 30cm ((1740µs * 0.5(tick ogni 0.5 µs)) / 58) = 30cm
+    if (TCNT1 < 3480){    
+      Serial.println("DEBUG: rilevamento "); // *DEBUG*
+    }
+    else{
+    // oggetto non rilevato entro 30cm, start sleep mode
+    Serial.println("DEBUG: nessun rilevamento "); // *DEBUG*
+    startSleepMode();
+    }
+  }
+}
+
+// Configura il timer watchdog per generare interrupt ogni 4 secondi
+void setupWatchdogTimer() {
+  MCUSR &= ~_BV(WDRF); // Resetta il flag WDT
+  WDTCSR |= _BV(WDCE) | _BV(WDE); // Abilita la modifica dei registri del watchdog
+  // WDP3 = 1000 -> 4 secondi
+  WDTCSR = _BV(WDP3);  // Configura il prescaler per 4 secondi
+  WDTCSR |= _BV(WDIE); // Abilita interrupt
+}
+
+// Configura il microcontrollore per la modalità Power-down (consumo minimo)
+void startSleepMode() {
+  SMCR |= _BV(SE);        // Abilita la modalità Sleep
+  asm volatile("sleep");  // Esegue l'istruzione sleep per mettere il microcontrollore in modalità Power-down
+  SMCR &= ~_BV(SE);       // Disabilita la modalità sleep dopo il risveglio
+}
