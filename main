@@ -1,0 +1,271 @@
+// Autore: Vittori Matteo 
+// Matricola: 126646
+
+// link analisi: 
+// https://docs.google.com/document/d/1UHxso-cX7cJiFWlDNlBvoOX_gzhk8qu8950fqoEQPIY/edit?usp=sharing
+
+
+// Definizioni dei pin che sono usati nel sistema
+#define ECHO_PIN 2
+#define BUTTON_PIN 3 
+#define TRIG_PIN 4
+#define BUZZER_PIN 5
+#define RELAY_PIN 7
+#define SEGMENTS_PIN PORTC 
+#define DIGITS_PIN PORTB   
+
+#define MAX_ATTEMPTS 3
+#define CODE_LENGTH 3
+
+//  inserire nella variabile 'correctMorseCode' 0('.') o 1('_') in base al codice che si vuole generare
+uint8_t correctMorseCode = 0b010; // Codice Morse segreto, **(8 simboli max)**
+volatile uint8_t morseCode;   // Variabile per salvare il codice Morse inserito
+volatile uint8_t codeLength;  // Variabile per gestione del codice inserito
+volatile uint8_t errors;      // numero errori commessi
+volatile bool flagStart;      // flag che indica che l'inseriento è iniziato
+volatile bool pinState;       // indica lo stato precedente del pin
+volatile bool STOP_flag;      // indica lo stop all'inserimento del codice 
+volatile uint8_t max_attemps; // permette di decrementare il numero di tenativi ad ogni allarme
+
+volatile uint16_t counter;  // utilizzato per la gestione temporizzazioni nel sistema(display e pulsante)
+
+//  Variabili per gestione DISPLAY
+volatile uint8_t digit, segments[] = {0,0,0,0}; 
+
+
+void setup() {
+  cli(); // Disabilita gli interrupt globali per evitare interruzioni durante la configurazione iniziale
+
+  DDRD &= ~_BV(BUTTON_PIN); // Pin D3 come input
+  EICRA |= _BV(ISC10);      // Abilita interrupt su pin change
+  PORTD |= _BV(BUTTON_PIN); // Abilita pull-up interno
+
+  DDRD &= ~_BV(ECHO_PIN); // Pin D2 come input
+  EICRA |= _BV(ISC00);    // Configura INT0 per attivarsi su pin change
+  EIMSK |= _BV(INT0);     // Abilita l'interrupt INT0
+
+  DDRD |= _BV(TRIG_PIN);  // Pin D4 come output
+
+  DDRC = 0x7F; // A0-A6 = 1 (output)
+  DDRB = 0x0F; // D8-D11 = 1 (output)
+
+  DDRD |= _BV(BUZZER_PIN); // D5 come output
+
+  DDRD |= _BV(RELAY_PIN);  // Imposta il pin 7 come output
+
+  TCCR0A = 0;              // Modalità normale
+  TCCR0B = (_BV(WGM01)|_BV(CS01)|_BV(CS00));  // CTC, prescaler 64
+  OCR0A = 37;              // Frequenza ≈ 750 Hz 
+  OCR0B = 3;               // 3 * 4µs ≈ 12µs
+  TIMSK0 = 0;              // Disabilita tutti gli interrupt del Timer 0
+
+  TCCR1A = 0;              // Modalità normale
+  TCCR1B |= _BV(CS11);     // Imposta il prescaler a 8 (1 tick ogni ≈ 0.5µs) 
+  TCCR1B &= ~(_BV(CS12) | _BV(CS10)); // reset dei pin non di interesse
+  OCR1A = 10000;           // 10000 * 0.5µs ≈ 5ms 
+  OCR1B = 10000;           // utilizzato per gestione lampeggio del messaggio '8888'
+
+  TCCR2B |= _BV(CS22) | _BV(CS21); // Imposta prescaler 256 in modo da avere un overflow ogni 8.192ms
+
+  flagStart = counter = errors = morseCode = 0;
+  max_attemps = MAX_ATTEMPTS;
+
+  setupWatchdogTimer(); 
+
+  sei(); // Riabilita gli interrupt globali dopo la configurazione
+
+  SMCR |= _BV(SM1);  // Power-down mode
+  startSleepMode();  // entra in modalità risparmio energetico
+}
+
+void loop() {
+}
+
+ISR(WDT_vect) {
+  PORTD |= _BV(TRIG_PIN);  // Attiva TRIG
+  TCNT0 = 0;
+  TIMSK0 |= _BV(OCIE0B);   // Abilita l'interrupt
+}
+
+ISR(TIMER0_COMPB_vect) {
+  TIMSK0 &= ~_BV(OCIE0B);  // Disabilita l'interrupt per OCR0B
+  PORTD &= ~_BV(TRIG_PIN); // Disattiva TRIG 
+}
+
+ISR(INT0_vect) {
+   if(PIND & _BV(ECHO_PIN)){
+   TCNT1 = 0x00;  // Resetta Timer1
+  }else{
+    if (TCNT1 < 3480){    
+      WDTCSR &= ~_BV(WDIE); // disabilita il WDT interrupt
+      TCCR1B |= _BV(WGM12); // abilita la modalità CTC su timer1
+      // mostra messaggio 'CIAO'
+      segments[0] = 0b00111001;
+      segments[1] = 0b00110000;
+      segments[2] = 0b01110111;
+      segments[3] = 0b00111111;
+      TIMSK1 |= _BV(OCIE1A);    // abilita l'interrupt per OCR1A
+    }
+    else{
+    startSleepMode();
+    }
+  }
+}
+
+ISR(TIMER1_COMPA_vect) {
+  DIGITS_PIN = 0; // Per anodo comune, tutti i pin sono impostati a 0 per spegnere i digit
+
+  SEGMENTS_PIN = ~segments[digit];   // Inverte i segmenti (anodo comune usa logica opposta)
+  DIGITS_PIN = _BV(digit);           // Seleziona il digit con un segnale alto
+  digit = (digit + 1) & 0b11;        // incremento del contatore digit
+
+  if (counter++ == 500) {    // va a fermare la durata del messaggio a 500 che equivale a 2,5s(500 * 5ms)
+    TIMSK1 &= ~_BV(OCIE1A);  // Disabilita l'interrupt per OCR1A
+    DIGITS_PIN = 0;          // Spegne i digits
+    counter = 0;             // Reset contatore
+    checkStopFlagAndHandle(); 
+  }
+}
+
+ISR(TIMER1_COMPB_vect) {
+  DIGITS_PIN = 0; // Per anodo comune, tutti i pin sono impostati a 0 per spegnere i digit
+
+  if((counter & 0xFF) < 128){  // Maschera bit per ottenere lo stesso effetto di % 128
+    SEGMENTS_PIN = ~segments[digit];  
+    DIGITS_PIN = _BV(digit);          
+    digit = (digit + 1) & 0b11;       
+  }
+
+  if (counter++ == 12000) {   // va a fermare la durata del messaggio a 12000 che equivale a 60s(12000 * 5ms)
+    TIMSK1 &= ~_BV(OCIE1B);   // Disabilita l'interrupt per OCR1B
+    TIMSK0 &= ~_BV(OCIE0A);   // Disabilita l'interrupt per OCR0A
+    DIGITS_PIN = 0;           // Spegne i digits
+    counter = 0;              // Reset contatore
+    WDTCSR |= _BV(WDIE);      // Abilita interrupt WDT
+    TCCR1B &= ~_BV(WGM12);    // Disabilita la modalità CTC su timer1
+    startSleepMode();
+  }
+}
+
+// ISR per gestione BUZZER
+ISR(TIMER0_COMPA_vect) {
+  PORTD ^= _BV(PORTD5); 
+}
+
+ISR(TIMER2_OVF_vect) {
+  counter++;  // Incrementa il contatore overflow
+  if(flagStart && counter == 0xff) { // 255 * 8.192ms ≈ 2s (2,088s)
+    TIMSK2 &= ~_BV(TOIE2);  // Disabilita interrupt su overflow (Timer2)
+    counter = 0;            // reset counter
+    EIMSK &= ~_BV(INT1);    // Disabilita interrupt su INT1 
+    checkCode();
+  }else{
+    if(counter > 732){ // 732 * 8.192ms ≈ 6s (5,99s)
+      TIMSK2 &= ~_BV(TOIE2);  // Disabilita interrupt su overflow (Timer2)
+      counter  = 0;           // reset counter
+      EIMSK &= ~_BV(INT1);    // Disabilita interrupt su INT1 
+      TCCR1B &= ~_BV(WGM12);  // Disabilita la modalità CTC su timer1
+      WDTCSR |= _BV(WDIE);    // Abilita interrupt WDT
+      startSleepMode();
+    }
+  }
+}
+
+ISR(INT1_vect) {
+  bool currentState = !(PIND & _BV(BUTTON_PIN)); // Stato attuale del pin (premuto o rilasciato)
+  if (currentState != pinState) {
+    pinState = currentState; // Aggiorna lo stato del pin
+    if (currentState) {   // Pulsante premuto
+      counter = 0;        // Registra il momento di inizio della pressione
+      flagStart = true;   // Attiva il flag di inizio
+    } else {  // Pulsante rilasciato
+      if (counter > 3) {  // ritardo necessario per la gestione del debounce 3*8.192≈ 25 ms
+        morseCode <<= 1;  // Shift a sinistra per fare spazio al nuovo simbolo
+        codeLength++;
+        if (counter < 49) {
+          // Aggiungi un `0` per il punto
+        } else {
+          morseCode |= 1;  // Aggiunge un `1` per la linea
+        }       
+      }
+    }
+  }
+}
+
+void checkStopFlagAndHandle() {
+  if (STOP_flag) {
+    PORTD &= ~_BV(RELAY_PIN); // Imposta il pin 7 a LOW per disattivare il relay
+    STOP_flag = false;        // Reset flag
+    WDTCSR |= _BV(WDIE);      // Abilita interrupt WDT
+    TCCR1B &= ~_BV(WGM12);    // Disabilita la modalità CTC su timer1
+    startSleepMode();
+  } else {
+    EIMSK |= _BV(INT1);     // Abilita l'interrupt INT1
+    TIMSK2 |= _BV(TOIE2);   // Abilita interrupt su overflow
+  }
+}
+
+void checkCode(){
+  if(morseCode == correctMorseCode && codeLength == CODE_LENGTH){
+    max_attemps = 3; // se il codice inserito è corretto il numero max di tentativi viene resettato
+    errors = 0;      // reset n errori
+    // 'Ent' MESSAGE
+    segments[0] = 0b01111001;
+    segments[1] = 0b01110100;
+    segments[2] = 0b01110000;
+    segments[3] = 0;          // Spazio vuoto
+    STOP_flag = true;
+    PORTD |= _BV(RELAY_PIN);  // Imposta il pin 7 a HIGH per attivare il relè
+    TIMSK1 |= _BV(OCIE1A);    // abilita l'interrupt per OCR1A  
+  }
+  else{
+    if(++errors == max_attemps) {
+      if(max_attemps > 1)max_attemps--;
+      errors = 0; 
+      // '8888' MESSAGE 
+      segments[0] = 0b01111111;
+      segments[1] = 0b01111111;
+      segments[2] = 0b01111111;
+      segments[3] = 0b01111111;
+      TIMSK1 |= _BV(OCIE1B);    // abilita l'interrupt per OCR1A
+      TIMSK0 |= _BV(OCIE0A);    // Abilita l'interrupt per il match OCR0A
+    }
+    else{
+      //'Er n' MESSAGE
+      segments[0] = 0b01111001;
+      segments[1] = 0b01110000;
+      segments[2] = 0;              // Spazio vuoto
+      switch (max_attemps-errors) {
+        case 0:
+          segments[3] = 0b00111111; // 'O'
+          break;
+        case 1:
+          segments[3] = 0b00110000; // '1'
+         break;
+        case 2:
+        segments[3] = 0b01011011; // '2'
+          break;
+        default:
+          segments[3] = 0;          // Spazio vuoto per valori > 2
+          break;
+      }
+      TIMSK1 |= _BV(OCIE1A);        // abilita l'interrupt per OCR1B
+    }
+  }
+  flagStart = morseCode = codeLength = 0; // Reset delle variabili utilizzate
+}
+
+void setupWatchdogTimer() {
+  MCUSR &= ~_BV(WDRF); // Resetta il flag WDT
+  WDTCSR |= _BV(WDCE) | _BV(WDE); // Abilita la modifica dei registri del watchdog
+  // WDP3 = 1000 -> 4 secondi
+  WDTCSR = _BV(WDP3);  // Configura il prescaler per 4 secondi
+  WDTCSR |= _BV(WDIE); // Abilita interrupt WDT
+}
+
+// Configura il microcontrollore per la modalità Power-down (consumo minimo)
+void startSleepMode() {
+  SMCR |= _BV(SE);        // Abilita la modalità Sleep
+  asm volatile("sleep");  // Esegue l'istruzione sleep per mettere il microcontrollore in modalità Power-down
+  SMCR &= ~_BV(SE);       // Disabilita la modalità sleep dopo il risveglio
+}
