@@ -1,0 +1,140 @@
+#define SEGMENTS_PIN PORTC // A0-A6 -> Segmenti (a-g)
+#define DIGITS_PIN PORTB   // D8-D11 -> Cifre (Digit 0-3)
+#define BUZZER_PIN 5
+#define MAX_ATTEMPTS 3
+
+// -MESSAGE_DURATION: Questa variabile indica la durata totale di visualizzazione di un messaggio sul display
+// Viene utilizzata per determinare il termine della visualizzazione del messaggio e per la gestione del lampeggio
+// -digit: Questa variabile tiene traccia dell'indice del "digit"
+// -segments[]: Questo array contiene i valori di segmenti che devono essere accesi per ciascun digit
+volatile uint16_t count_cycles, MESSAGE_DURATION;
+volatile uint8_t attemps = MAX_ATTEMPTS-1, digit;
+volatile uint8_t segments[] = {0,0,0,0};
+volatile bool blink_flag; // flag che indica se il lampeggio del display deve essere attivato o meno
+
+void setup() {
+  cli();
+  Serial.begin(115200);
+  // Configurazione resgistri per gestione display 7 segmenti 4 digits
+  DDRC = 0x7F; // A0-A6 = 1 (output)
+  DDRB = 0x0F; // D8-D11 = 1 (output)
+
+  // Configurazione del Timer1 per gestione schermo
+  TCCR1A = 0;             // Modalità normale
+  TCCR1B |= (_BV(WGM12)|_BV(CS11));  // prescaler 8, 1 tick ogni 0.5µs
+  TCCR1B &= ~(_BV(CS12)|_BV(CS10));  // reset dei pin non di interesse
+  OCR1A = 10000;          // 10000 * 0.5µs = 5ms 
+
+  sei();
+}
+
+void loop() {
+ciao();
+delay(3000);
+correctCode();
+delay(3000);
+attemptsFailed();
+delay(3000);
+alarm();
+delay(3000);
+if(--attemps==0) attemps = MAX_ATTEMPTS-1;
+}
+
+// Mappatura dei caratteri su segmenti (a-g) per display a 7 segmenti,
+// usati per visualizzare i messaggi: 'CIAO','Ent','Er n','8888'
+/*
+const uint8_t charMap[] = {
+  0b00111111, // 'O'     -0-
+  0b00110000, // 'I'/'1' -1-
+  0b01011011, // '2'     -2-
+  0b00111001, // 'C'     -3-
+  0b01111111, // '8'     -4-
+  0b01111001, // 'E'     -5-
+  0b01110000, // 'r'/'t' -6-
+  0b01110111, // 'A'     -7-
+  0b01110100, // 'n'     -8-
+};
+*/
+
+// ISR per gestione messaggi su display, che si attiva ogni 5ms
+ISR(TIMER1_COMPA_vect) {
+  // Spegne tutti i digits
+  DIGITS_PIN = 0; // Per anodo comune, tutti i pin sono impostati a 0 per spegnere i digit
+  
+  // controlla se il lampeggio è attivo
+  if (blink_flag){
+    if((count_cycles & 0x7F) < 64){  // Maschera bit per ottenere lo stesso effetto di % 128
+      // Aggiorna i segmenti e attiva il digit corrispondente
+      SEGMENTS_PIN = ~segments[digit];  // Inverte i segmenti (anodo comune usa logica opposta)
+      DIGITS_PIN = _BV(digit);          // Seleziona il digit con un segnale alto
+      digit = (digit + 1) & 0b11;       // Reset del contatore digit
+    }
+  }
+  // Lampeggio non attivo
+  else{
+    SEGMENTS_PIN = ~segments[digit]; 
+    DIGITS_PIN = _BV(digit);        
+    digit = (digit + 1) & 0b11;        
+  }
+  
+  if (count_cycles++ == MESSAGE_DURATION) {
+    TIMSK1 &= ~_BV(OCIE1A);  // Disabilita l'interrupt per OCR1A
+    DIGITS_PIN = 0;          // Spegne i digits
+    blink_flag = count_cycles = 0;  // Reset variabili
+  }
+}
+
+void ciao() {
+  // 'C', 'I', 'A', 'O' 
+  segments[0] = 0b00111001;
+  segments[1] = 0b00110000;
+  segments[2] = 0b01110111;
+  segments[3] = 0b00111111;
+  MESSAGE_DURATION = 400;   // imposta la durata del messaggio a 400 che equivale a 2s(400 * 5ms)
+  TIMSK1 |= _BV(OCIE1A);    // abilita l'interrupt per OCR1B
+}
+
+void correctCode() {
+  // 'E', 'n', 't' 
+  segments[0] = 0b01111001;
+  segments[1] = 0b01110100;
+  segments[2] = 0b01110000;
+  segments[3] = 0;          // Spazio vuoto
+  MESSAGE_DURATION = 400;   // imposta la durata del messaggio a 400 che equivale a 2s
+  TIMSK1 |= _BV(OCIE1A);    // abilita l'interrupt per OCR1B
+}
+
+void alarm() {
+  // visualizza '8888'
+  segments[0] = 0b01111111;
+  segments[1] = 0b01111111;
+  segments[2] = 0b01111111;
+  segments[3] = 0b01111111;
+  blink_flag = true;
+  MESSAGE_DURATION = 400;  // imposta la durata del messaggio a 400 che equivale a 2s
+  TIMSK1 |= _BV(OCIE1A);    // abilita l'interrupt per OCR1B
+}
+
+void attemptsFailed() {
+  // 'E', 'r', spazio, n errori
+  segments[0] = 0b01111001;
+  segments[1] = 0b01110000;
+  segments[2] = 0;              // Spazio vuoto
+  // Associa il numero binario corretto in base a attemps
+  switch (attemps) {
+    case 0:
+      segments[3] = 0b00111111; // 'O'
+      break;
+    case 1:
+      segments[3] = 0b00110000; // '1'
+      break;
+    case 2:
+      segments[3] = 0b01011011; // '2'
+      break;
+    default:
+      segments[3] = 0;          // Spazio vuoto per valori non validi
+      break;
+  }
+  MESSAGE_DURATION = 400;       // imposta la durata del messaggio a 400 che equivale a 2s
+  TIMSK1 |= _BV(OCIE1A);        // abilita l'interrupt per OCR1B
+}
