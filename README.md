@@ -1,154 +1,156 @@
-# Centralina di Accesso Dormiente
+# Dormant Access Control Unit
 
-Sistema embedded per il controllo accessi basato su sensore di prossimità e inserimento codice Morse, progettato per ottimizzare consumi energetici e sicurezza.
-
----
-
-## Descrizione
-
-Questo progetto implementa una **centralina di accesso intelligente** che rimane in modalità *low-power* (sleep) e si attiva solo quando rileva una presenza entro 30 cm.
-
-L’utente può inserire un codice segreto tramite pulsante utilizzando il **codice Morse**. Il sistema gestisce:
-
-- Accesso autorizzato
-- Tentativi errati
-- Attivazione allarme
-- Risparmio energetico avanzato tramite interrupt
+An embedded access control system based on a proximity sensor and Morse code input, designed to optimize energy consumption and security.
 
 ---
 
-## Funzionalità principali
+## Description
 
-- Rilevamento presenza con sensore ultrasuoni (HC-SR04)
-- Visualizzazione messaggi su display 7 segmenti (4 digit)
-- Inserimento codice Morse tramite pulsante
-- Sblocco serratura tramite relè
-- Sistema di allarme con buzzer
-- Modalità sleep per ottimizzazione energetica
-- Gestione completa tramite interrupt (NO delay)
+This project implements an intelligent access control unit that remains in low-power sleep mode and activates only when a presence is detected within 30 cm.
 
----
+The user can enter a secret code through a push button using Morse code. The system manages:
 
-## Logica di funzionamento
-
-1. **Sleep Mode**
-   - Sistema inattivo per risparmio energetico
-
-2. **Rilevamento presenza**
-   - Attivazione periodica tramite Watchdog Timer
-   - Se distanza < 30 cm → sistema attivo
-
-3. **Interazione utente**
-   - Display mostra `"CIAO"`
-   - Inserimento codice Morse:
-     - Pressione breve → `.`
-     - Pressione lunga → `_`
-
-4. **Verifica codice**
-   - Corretto → `"Ent"` + apertura serratura
-   - Errato → `"Er n"` (tentativi rimanenti)
-
-5. **Allarme**
-   - Dopo troppi errori → `"8888"` lampeggiante + buzzer
-
-6. **Ritorno a sleep**
+- Authorized access
+- Incorrect attempts
+- Alarm activation
+- Advanced power saving through interrupts
 
 ---
 
-## Architettura modulare
+## Main Features
 
-Il sistema è suddiviso in moduli indipendenti:
-
-- Sensore HC-SR04
-- Display 7 segmenti
-- Gestione pulsante + Morse
-- Controllo accesso
-- Sistema di allarme
-- Gestione sleep mode
-
----
-
-## Gestione Interrupt
-
-Il sistema è completamente **event-driven**, senza uso di `delay()`.
-
-### Interrupt utilizzati:
-
-- WDT (Watchdog Timer) → attivazione sensore
-- INT0 (ECHO) → calcolo distanza
-- INT1 (Pulsante) → input Morse
-- Timer0 → gestione TRIG
-- Timer1 → gestione display
-- Timer2 → timing e timeout
+- Presence detection using an HC-SR04 ultrasonic sensor
+- Message display on a 4-digit seven-segment display
+- Morse code input through a push button
+- Door unlocking via relay
+- Alarm system with buzzer
+- Sleep mode for energy optimization
+- Fully interrupt-driven operation (no delays)
 
 ---
 
-## Parametri principali
+## Operating Logic
 
-| Parametro | Valore |
-|----------|--------|
-| Distanza attivazione | 30 cm |
-| Debounce pulsante | 10–50 ms |
-| Punto Morse | 100–300 ms |
-| Linea Morse | 300–900 ms |
-| Timeout input | ~6 sec |
-| Frequenza display | ≥ 40 Hz |
-| Frequenza buzzer | ~750 Hz |
+1. Sleep Mode
+   - The system remains inactive to minimize power consumption.
+
+2. Presence Detection
+   - Periodic activation through the Watchdog Timer.
+   - If the measured distance is less than 30 cm, the system becomes active.
+
+3. User Interaction
+   - The display shows "CIAO".
+   - Morse code input:
+     - Short press → .
+     - Long press → -
+
+4. Code Verification
+   - Correct code → "Ent" displayed and door unlocked.
+   - Incorrect code → "Er n" displayed, indicating remaining attempts.
+
+5. Alarm Activation
+   - After too many failed attempts, the display flashes "8888" and the buzzer is activated.
+
+6. Return to Sleep Mode
+   - The system returns to low-power operation.
 
 ---
 
-## Componenti hardware
+## Modular Architecture
 
-- Sensore ultrasuoni HC-SR04
-- Display 7 segmenti (4 digit)
-- Pulsante
-- Relè
+The system is divided into independent modules:
+
+- HC-SR04 sensor module
+- Seven-segment display module
+- Push-button and Morse code handler
+- Access control module
+- Alarm management module
+- Sleep mode manager
+
+---
+
+## Interrupt Management
+
+The system is entirely event-driven and does not use delay().
+
+### Interrupts Used
+
+- WDT (Watchdog Timer) → sensor activation
+- INT0 (ECHO) → distance measurement
+- INT1 (Push Button) → Morse code input
+- Timer0 → TRIG signal generation
+- Timer1 → display multiplexing
+- Timer2 → timing and timeout management
+
+---
+
+## Main Parameters
+
+| Parameter | Value |
+|------------|---------|
+| Activation distance | 30 cm |
+| Button debounce | 10–50 ms |
+| Morse dot duration | 100–300 ms |
+| Morse dash duration | 300–900 ms |
+| Input timeout | ~6 s |
+| Display refresh rate | ≥ 40 Hz |
+| Buzzer frequency | ~750 Hz |
+
+---
+
+## Hardware Components
+
+- HC-SR04 ultrasonic sensor
+- 4-digit seven-segment display
+- Push button
+- Relay
 - Buzzer
-- Microcontrollore (es. AVR)
+- Microcontroller (e.g., AVR)
 
 ---
 
-## Soluzioni alternative
+## Alternative Solutions
 
-- LED / LED RGB → più semplice ma meno informativo
-- Display LCD → più flessibile ma più complesso
-- Sensore PIR → meno preciso ma più efficiente
-
----
-
-## Simulazione
-
-- Modalità normale: https://wokwi.com/projects/408737880547079169
-- Modalità debug: https://wokwi.com/projects/421052364059217921
+- LED / RGB LED → simpler but less informative
+- LCD display → more flexible but more complex
+- PIR sensor → more energy-efficient but less precise
 
 ---
 
-## Manuale utilizzo
+## Simulation
 
-| Messaggio | Significato |
-|----------|------------|
-| CIAO | Sistema pronto |
-| Ent | Accesso consentito |
-| Er n | Codice errato |
-| 8888 | Allarme attivo |
+- Normal mode: https://wokwi.com/projects/408737880547079169
+- Debug mode: https://wokwi.com/projects/421052364059217921
 
 ---
 
-## Competenze sviluppate
+## User Manual
 
-- Programmazione embedded
-- Gestione interrupt
-- Ottimizzazione energetica
-- Progettazione modulare
-- Interfacciamento hardware/software
+| Message | Meaning |
+|----------|---------|
+| CIAO (hello) | System ready |
+| Ent | Access granted |
+| Er n | Incorrect code |
+| 8888 | Alarm active |
 
 ---
 
-## Conclusione
+## Skills Developed
 
-Sistema progettato per essere:
+- Embedded programming
+- Interrupt handling
+- Power optimization
+- Modular system design
+- Hardware/software integration
 
-- efficiente   
-- sicuro   
-- reattivo 
+---
 
+## Conclusion
+
+The system has been designed to be:
+
+- Efficient
+- Secure
+- Responsive
+
+Through the combined use of low-power techniques, interrupt-driven programming, and modular architecture, it provides a reliable and energy-efficient access control solution.
